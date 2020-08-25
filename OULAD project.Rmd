@@ -1,0 +1,513 @@
+---
+title: "STAT 6560 Final Project Report : The Clickstream and Learning Performance Online"
+author: "QIWEI MEN"
+date: "12/6/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+options(tinytex.verbose = TRUE)
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(psych)
+library(pcaPP)
+library(factoextra)
+library(klaR)
+library(MVN)
+library(ggfortify)
+```
+
+# 1. Introduction 
+
+- As the development of the internet and popularization of individual computers and other networking devices, online education is changing the game of education and making education more accessible, flexible and affordable.  In the recent 10 years, the emergence of MOOCs (Mssive Open Online Courses) brought a revolution to the educational business. MOOCs platforms like Coursera, Edx and Udemy have changed people's expectation of online learning.  As of February 2017, Coursera had 24 million registered users signed up for its programs, and offered more than 2,000 online courses. Lots of people cannot go to colleges start learning online and change their lives.
+
+- As online learning shows a possible picture of education in the future, we get interested in how virtual learning environments influence the learner's behavior and how these behaviors influence their performance in online education. In this project, we will use the OULAD dataset and methods like factor analysis to detect the relationship between learner's click actions and their performances.
+
+- Based on the analysis, we may :  a. predict the performance of learners; b. evaluate the course design; c. offer suggestions to learners and course designers. All these questions are critical for MOOC platforms and learners. 
+
+- Researchers have done lots of jobs in investigating the difference between online learning and traditional face-to-face leaning. Like the  theory of transactional distance ( Michael Grahame Moore,1993), the interaction equivalency theorem (Terry Anderson,2003), and the community of inquiry models(Garrison, Anderson & Archer, 2000). 
+
+- Most of these studies focus on building the theoretical model of learning and interaction in distance education,  some MOOCs platform start to build their own data analysis center and conduct Learning Analytic. For example, Harvard and MIT published their report of Open Online Courses on Edx. 
+
+- In this project, we will use multivariate analysis methods like the principal component, factor analysis and classification & discrimination, try to build a model for identifying learners in different groups and use this model to predict the performance of students.
+ 
+
+# 2. Data
+
+## The original source for the data. 
+
+- The OULD data set contains data from courses presented at the Open University (OU). It contains demographic data together with aggregated clickstream data of students’ interactions in the Virtual Learning Environment (VLE). This enables the analysis of student behaviour, represented by their actions. The dataset contains the information about 22 courses, 32,593 students, their assessment results, and logs of their interactions with the VLE represented by daily summaries of student clicks (10,655,280 entries). The dataset is freely
+available at https://analyse.kmi.open.ac.uk/open_dataset under a CC-BY 4.0 license.
+
+## The Methods for Collecting the Data
+
+- The open university data collection process
+At the OU, various information systems for student and module support exist. Due to variability in information collected within each system, the OU implemented a data warehouse, which aggregates information from all available systems. The warehouse is built using SAS technology (https://www.sas.com). In general, we distinguish three different data types:
+
+- Demographic—represents the basic information about the students including their age, gender, region, previous education, etc.
+
+- Performance—reflects students’ results and achievements during their studies at the OU.
+
+- Learning behaviour—is the log of student activities in the VLE.
+
+
+## Rules of the Data Selection
+
+- The number of students in the selected module-presentation is larger than 500. 
+
+- At least two presentations of the module exist.
+VLE data are available for the module-presentation (since not all the modules are studied via VLE). 
+
+- The module has a significant number of failing students.
+Out of the all modules that satisfy these criteria we selected 7 modules: 4 Science, Technology, Engineering, and Mathematics (STEM) modules and 3 Social Sciences modules. The total number of students in the selected modules is 38,239.
+
+- The dataset anonymisation process was designed according to the ethical and privacy requirements applied at the OU. 
+
+
+## Tidyverse and Data Cleaning
+
+- In this project we only use the data of modules F which is a STEM course with 4 presentations in two years, we select the presentation in spring 2013, extract information from 7 tables. The data after preprocessing include 7 variables and 1538 observations.
+
+```{r,echo=FALSE}
+f_row <- read.csv("~/Courses/STAT6560/Project/data_f_row.csv", row.names=1)
+
+f1 <- f_row %>%
+  dplyr::select(active_days, viewed_content, forumng, oucontent, resource, quiz, CMA_score, final_result)
+
+head(f1)
+```
+
+### Variables Introduction
+
+- active_days - How many days the students make at least 1 clicks.
+
+- viewed_content - How many contents the student has viewed, this course has 370 contents online. 
+
+- oucontent - videos and lectures produced by the Open University teaching team.
+
+- forumng - forum for asking questions, making discussions and other interactions.
+
+- quiz - quiz related to the content.
+
+- Resource - other learning resources like articles and videos not created by OU.
+
+- CMA_score - score earned in the quiz, CMA_score weights 5-10% in the final result. The score was given by a computer.
+
+- final_result- 4 levels withdraw, fail, pass and distinction.
+
+
+## Check the Distributions for Variables 
+
+```{r,echo=FALSE}
+ggplot(gather(f1[1:7]), aes(value)) + 
+    geom_histogram(bins = 20) + 
+    facet_wrap(~key, scales = 'free_x')
+```
+
+```{r, warning=FALSE,echo=FALSE}
+library(GGally)
+ggpairs(f1[1:7])
+```
+
+- From the univariate and bivariate distributions plot, the row data do not have an approximate MVN from, Mardia Skewness and Mardia Kurtosis test all have p-value = 0
+
+- For conducting the following analysis, we decide do BOX-COX transformations to our variables to reduce the skewness.
+
+
+## Data Transformation
+
+### First step:find lambda for BOX-COC transformation. 
+
+```{r,warning=FALSE}
+library(forecast)
+BoxCox.lambda(f1$active_days)
+BoxCox.lambda(f1$viewed_content)
+BoxCox.lambda(f1$forumng)
+BoxCox.lambda(f1$oucontent)
+BoxCox.lambda(f1$resource)
+BoxCox.lambda(f1$quiz)
+BoxCox.lambda(f1$CMA_score)
+```
+
+### Second step: conduct the transformation
+
+- From the result of BoxCOX.lambda, we decide to conduct `sqrt` transformation to active_days,viewed_content and quiz. conduct `log(x+1)` transformation to forumng, oucontent and resource.
+
+```{r}
+f1_t <- f1 %>%
+  mutate(active_days = sqrt(active_days),
+         viewed_content = sqrt(viewed_content),
+         forumng = log(forumng+1), 
+         oucontent = log(oucontent + 1),
+         resource = log(resource + 1),
+         quiz = sqrt(quiz))
+```
+
+
+### Third step: Check the univariate and bivariate distributions of transformed data
+
+```{r,echo=FALSE}
+ggplot(gather(f1_t[1:7]), aes(value)) + 
+    geom_histogram(bins = 50) + 
+    facet_wrap(~key, scales = 'free_x')
+```
+
+
+```{r, echo=FALSE}
+ggpairs(f1_t[1:7])
+```
+
+
+## Outlier Detecting 
+
+- From the plot above, we can notice some obvious outliers.
+
+### First step: detect outliers
+
+- Use package mvoutlier to detect outliers which infulence the multivarite normality of our data.
+
+```{r,echo=FALSE}
+library(mvoutlier)
+outl <- aq.plot(f1_t[1:6], quan = 1, alpha = 0.05 )
+table(outl$outliers)
+```
+
+### second step: remove outliers from data
+```{r, echo=FALSE}
+f1_t$outlier <- outl$outliers
+f1_t2 <- subset(f1_t, outlier == FALSE)
+dim(f1_t2)
+dim(f1_t)
+table(f1$final_result)
+table(f1_t2$final_result)
+```
+
+- In the outlier detecting procedure, we use `quan = 0.8` and `alpha = 0.05`, which give a high tolerance for outliers. The purpose is keeping as much information as possible in the data.
+
+- After we remove outliers, There's still 1412 observations, the percent of outliers that been removed from the data is 0.057.
+
+
+### third step :  Check the univariate and bivariate distributions again
+```{r,echo=FALSE}
+ggplot(gather(f1_t2[1:7]), aes(value)) + 
+    geom_histogram(bins = 20) + 
+    facet_wrap(~key, scales = 'free_x')
+```
+
+```{r, warning=FALSE,echo=FALSE}
+library(GGally)
+ggpairs(f1_t2[1:7])
+```
+
+- From the plot we can say that the multi-normality has been improved, we will proceed with this data for the following analysis.
+
+
+# 3. Methods 
+
+## a.Multivariate Methods Used in this Research
+
+### Factor analysis 
+
+- Factor analysis is a technique that is used to reduce a large number of variables into fewer numbers of factors.  This technique extract maximum common variance from all variables and puts them into a common score.  As an index of all variables, we can use this score for further analysis.  
+
+- Factor analysis is part of general linear model (GLM) and this method also assumes several assumptions: variables should be continuous, there is linear relationship, there is no multicollinearity, and there is true correlation between variables and factors. In general, linear FA does not require normality of the input data. Moderately skewed distributions are acceptable. Several methods are available, in this project , we use principal component analysis and  maximum likelihood method.
+
+- The principal component is the most common method used by researchers.  PCA starts extracting the maximum variance and puts them into the first factor.  After that, it removes that variance explained by the first factors and then starts extracting maximum variance for the second factor.  This process goes to the last factor.
+
+- Maximum likelihood method also works on correlation metrics but it uses maximum likelihood method to factor.
+
+
+### Classificaiton and Discrimnatition
+
+- Discrimination and classification use measured variables to put the observations into different classes. In this project I mainly use Fisher’s Linear Discriminant Analysis(lda).
+
+- LDA looks for linear combinations of the independent variables to best explain the data and predict the different classes. The discriminant scores are calculated for each observation for each class based on these linear combinations. The class with the largest score will be the classification prediction for that observation. 
+
+- The assumptions of discriminant analysis are the same as those for factor analysis. The analysis is quite sensitive to outliers and the size of the smallest group must be larger than the number of predictor variables. Independent variables are normal for each level of the grouping variable. It has also been shown that discriminant analysis may still be reliable when multivariate normality is often violated. 
+
+- In our project we had already removed outliers and did the transformation. By checking the distribution of the data, we believe that the data is acceptable for these multivariate analysis methods.
+
+
+# 4. Analysis 
+
+## Factor analysis
+
+### Check the correlation Matrix of the data
+
+```{r}
+library(corrplot)
+corrplot(cor(f1_t[1:7]), method="number")
+```
+
+
+### Find the principle component
+
+```{r,echo=FALSE}
+pca <- princomp(f1_t2[1:7],cor = TRUE)
+summary(pca)
+screeplot(pca, type = "l")
+
+pca.var <- pca$sdev^2  
+pca.pvar <- pca.var/sum(pca.var) 
+
+plot(cumsum(pca.pvar), xlab = "Principal component", ylab = "Cumulative Proportion of variance explained", ylim = c(0,1), type = 'b')
+abline(h = 0.8,col = "red")
+abline(h = 0.9,col = "blue")
+```
+
+- From the cumulative scree plot, we can see that the first three PCs can explain over 90% percent variances, the first PC is very significant which can explain over 70% variance.
+  
+### Factor Analysis (Principle Component)
+
+```{r}
+pc <- principal(f1_t2[1:7], nfactors=3, rotate="varimax",covar =FALSE)
+pc
+```
+```{r}
+library(FactoMineR)
+result <- PCA(f1_t2[1:7])
+```
+
+### Interpretation 
+
+- The first factor can be explained as "practice factor,” in which quiz and CMA_score have a very high score in loadings, these two variables all related to the practice behavior in the learning.
+
+- The second factor can be explained as "interaction factor,” in which forumng have a higher score. The click on the forum means making interactions with other students like asking questions and making discussions.
+
+- The third factor can be explained as "content factor,” variables like oucontent, resources and viewed_content all related to the learning materials.
+
+
+### Factor analysis (Maximum likelihood)
+
+```{r}
+fa(f1_t2[1:7],nfactors=3,rotate="Oblimin")
+```
+
+### Interpretation
+
+- The first factor can be taken as "activeness factor,” which have a high value on all the variables, this factor can reflect the degree of activeness of students.
+
+- The second factor is the contrast between quiz, CAM_score and other factors, which reflect the difference in the behaviors related to practice.
+
+- The third factor is the contrast between variables related to content (oucontent, viewd_content and resources) and all other variables, reflect the difference in how students check learning materials,so this factor can be taken as "content factor.”
+
+
+## Classificaiton and discrimnatition
+
+### The corrolation matrix within different groups
+
+```{r, echo=FALSE}
+# Distinction
+f1_d <- subset(f1_t2, final_result == "Distinction")[1:7]
+cor(f1_d)
+
+# Pass
+f1_p <- subset(f1_t2, final_result == "Pass")[1:7]
+cor(f1_p)
+
+# Fail
+f1_f <- subset(f1_t2, final_result == "Fail")[1:7]
+cor(f1_f)
+```
+```{r}
+corrplot(cor(f1_d), method="ellipse")
+corrplot(cor(f1_p), method="ellipse")
+corrplot(cor(f1_f), method="ellipse")
+```
+
+### What factor make differences between groups
+
+```{r}
+autoplot(prcomp(f1_t2[1:7],scale = TRUE), data = f1_t2, colour = 'final_result', alpha = 0.5)
+```
+
+- From the plot, we can see that there's a clear difference between the failed students and the other two groups; pass students and distinction students are quite overlapped in the projection.
+
+- Points of fail students spread more widely, which reflect that there's more diversity in their learning behaviors
+
+```{r,echo=FALSE}
+# Distintion VS. Fail
+
+f1_fd <- subset(f1_t2, final_result == "Fail"|final_result == "Distinction")
+
+autoplot(prcomp(f1_fd[1:7],scale = TRUE), data = f1_fd, colour = 'final_result', alpha = 0.5)
+```
+```{r,echo=FALSE}
+# Pass VS. Fail
+
+f1_fp <- subset(f1_t2, final_result == "Fail"|final_result == "Pass")
+
+autoplot(prcomp(f1_fp[1:7],scale = TRUE), data = f1_fp, colour = 'final_result', alpha = 0.5)
+```
+
+```{r,echo=FALSE}
+# Distintion VS. Pass
+
+f1_dp <- subset(f1_t2, final_result == "Distinction"|final_result == "Pass")
+
+autoplot(prcomp(f1_dp[1:7],scale = TRUE), data = f1_dp, colour = 'final_result', alpha = 0.5)
+```
+
+- From the plot, we can see that the main difference between fail and thr other two groups is their activity level. While the main difference between distinction and pass students is the paractice factir.
+
+
+### Use LDA for classification
+```{r}
+# discrimnation
+lda_f1 <- lda(final_result ~ active_days + viewed_content + forumng + oucontent + resource + quiz + CMA_score , f1_t2)
+
+plot(lda_f1, dimen = 1, type = "both")
+```
+
+- From the plot, we can see that the behavior of failed students is far away from others, while distinction and pass students are highly overlapped with each other.
+
+
+### The effect of different types of activities
+
+```{r,echo=FALSE}
+library(klaR)
+partimat(final_result ~forumng + oucontent + 
+    resource + quiz ,data=f1_t2,method="lda") 
+```
+```{r,echo=FALSE}
+partimat(final_result ~ forumng + quiz ,data=f1_t2,method="lda") 
+```
+
+- The plot implies that failed students have a great difference in practice compared with the other group. 
+
+- Another fact here is that distinction students make more interactions compared with pass students.
+
+
+## Evalute the classification model
+
+### Compare the prediction results of lda model and the true result
+```{r}
+train <- f1_t2
+lda_train <- predict(lda_f1)
+train$lda <- lda_train$class
+table(train$lda,train$final_result)
+```
+
+- The total degree of accuracy is 0.82, the degree of accuracy for failed students is 0.98
+
+
+### Use holdout() to do the training and testing
+```{r}
+library(rminer)
+H=holdout(f1_t2$final_result,ratio=2/3,mode="stratified") 
+print(table(f1_t2[H$tr,]$final_result))
+print(table(f1_t2[H$ts,]$final_result))
+M=fit(final_result~.,f1_t2[H$tr,],model="rpart") # training data only
+P=predict(M,f1_t2[H$ts,]) # test data
+print(mmetric(f1_t2$final_result[H$ts],P,"CONF"))
+
+```
+
+- The total degree of accuracy is 0.80, the degree of accuracy for failed students is 0.79.
+
+
+# 5. Results 
+
+## Results from the analysis
+
+1. the result of factor analysis shows that overall activeness, interaction and content are all important factors which can influence the online learning performance.
+
+2. The result of factor analysis also shows that there are discrepancies  between different groups in click behavior. Failed students show lower activity compared with the other two groups. Compared with the pass students, distinction students are more active in practice and interaction 
+
+3. Content factors also influence the performance. There's a significant difference in clicks on OU content and resources between failed and the other two groups, this difference is not significant between pass and distinction students.
+
+4.The result of LDA discrimination shows that the behavior of pass and distinction students is quite similar and concentrated. The behavior of failed students divers a lot.
+
+## b. Are there any caveats? 
+
+1. In the data reprocessing stage, more failed students were removed as outliers, which may reduce the informativeness of the data. Since in this study, we more care about why students get failed and how to avoid it.
+
+2. The data only include click actions but no other information like how long the user stayed on the page, the order of clicks and how they jump between sections. In reality, the same click may not have the same meaning.
+
+3. The cross validation shows that the model does not perform well in predicting distinct students(less than 40%), so we should be careful when use this model to predict distinct students.
+
+
+# 6. Conclusions 
+
+## a. How do the results contribute to a resolution of the general problem? 
+
+1. Studies on distance education has already shown that  when teaching and learning happen in virtual space, the students' behavior pattern is different from that in face-to-face case. In this study, we use multivarite analysis methods to investigate how click actions varies between students with different outcomes. The results verified some theories in online learning studies and also raise some new questions for further studies.
+
+2. There are three most common types of interaction discussed in the distance education literature, which is the learner instructor, learner-learner, and learner-content interaction. Terry Anderson's (2003) notion of equivalency means that deep, meaningful learning can occur as long as one of the three forms of interaction is very high. The other two may be eliminated or offered at minimal levels without degrading the educational experience. Anderson asserts, however, that high levels of more than one type of interaction likely result in a more satisfying educational experience. 
+
+3. Student-teacher interaction has the highest perceived value among students, but in online education, there are so many students and only one teacher team to go around. Therefore, student-content interaction replaces student-teacher interaction in many mass education systems. In our research, we consider teacher videos(OU content) and other resources as forms of student-content interaction. 
+
+4. Traditional views believe that student-student interaction is more critical for collaborative and cooperative tasks while less critical for learning designs based on cognitive and behaviorist learning theories. The result of factor analysis implies that the student-student interaction can affect students' learning performance but the extent is less critical than content and practice.
+
+5. We believe that the individual learner's self-interaction is also critical. In our research, the practice factor can be explained as a learner-self interaction, in this process, learners interact with themselves and take a reflection on the learning content. In online courses, doing quiz is not a compulsive part, most students can get pass even though they never do quiz. However, our research shows that practice and learner-self interaction is a critical factor in the final performance especially between pass and distinction students.
+
+6. One limitation of this research is only one presentation of one course has been investigated, if we need a more general or specific view, we need to do more research on different courses. For example, find how the model changes across STEM courses and Social Science courses, even different presentations of the same course, which may lead to deeper consideration of this topic.
+
+7. Several sample suggestions can provide to online learners and course designers. For learners, being active is very important, most students with higher activity finished the course with good results. Contents is also critical, one advantage of online learning is that learners can watch the lecture video over and over again until they understand it, so there's no harm to make more clicks on contents. Doing practice and making interaction are necessary for improving performance to a higher level. 
+
+# 7. Reference Summaries 
+
+1. Anderson, T. (2003). Getting the mix right again: An updated and theoretical rational for interaction. The International Review of Research in Open and Distance Learning, 4(2). 
+
+Summary: Student-teacher interaction has the highest perceived value among students, but there is only so much of the teacher to go around. Therefore, student-content interaction replaces student-teacher interaction in many mass education systems. Anderson considers teacher videos and use of automated teacher agents as forms of student-content interaction. Student-student interaction is critical for collaborative and cooperative
+tasks. Student-student interaction is less critical for learning designs based on cognitive and behaviorist learning theories. Content is valuable only if it engages students and leads to knowledge
+construction.
+
+
+2. Stein, David S.and Constance E. Wanstreet (2017). Jump-Start Your Online Classroom: Mastering Five Challenges in Five Days. Chapter 5: Building Spaces and Places for Learning
+
+Summary: Online spaces can foster independent and interdependent learning. Spaces can enable individuals to obtain separate knowing and then to go beyond their own understandings and consider the ideas of others that are made possible by the resources inherent in the group and in the largest Web-based community. The First Space is Weekly Content which providing direction, content, and context for learning by giving learners the basic tools and rules for conducting the inquiry. The Second Space is The Reflective Space, where learners are provided with a private space for recording their emerging ideas about the issue of the contents. The Third Space is Chat or Sharing Space where learners negotiate meaning and search for a deeper understanding of the issue. The Fourth Space is The Break Room which is used to post learner introductions to begin building a sense of community and connections among the learners. The Fifth Space is The Community Space which provided an asynchronous discussion board for learners.
+
+
+3. Jakub Kuzilek, Martin Hlosta & Zdenek Zdrahal(2017), Data Descriptor: Open University Learning Analytics dataset
+
+Summary:With the rapid advancement of information technologies, the higher education sector experienced a massive increase in the amount of student data collected. In addition, Virtual Learning Environments emerged and moved courses to the Internet. This transfer was further supported by the boom of Massive Open Online Courses (MOOCs). In the past decade over 200 scientific studies investigated the impact of student data analysis1. This shows the importance of open datasets, which provide a standardised way to present and compare results.
+
+# 8. Supplement
+
+## Author biography:
+
+### Name: 
+
+- Qiwei Men
+
+### Education: 
+
+- Xiamen University
+
+  Bachelor of Arts in Chinese Language & literature                                            
+- The Ohio State University
+
+  Master of Arts in Educational Studies; Workforce Development & Education                    
+             
+### Research interests:
+
+1. The development of online education and MOOCs
+
+2. The influence of artificial intelligence to workforce development
+
+3. Cross-culture training in the era of globalization
+
+
+## R-code used in this research
+
+- `Tidyverse` and `dplyr` were used for data cleaning
+
+- `ggplot2` was mainly used for data visualization
+
+- Functions for factor analysis are from package `psych`
+
+- `movoutlier` was used for outlier detecting
+
+- `holdout` was used for cross-validation
+
+- Other important codes were included in the report
